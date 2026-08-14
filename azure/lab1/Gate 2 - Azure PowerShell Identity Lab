@@ -1,0 +1,601 @@
+# Azure PowerShell Identity Lab — Chewbacca and the GCP_Admins Group
+
+## Objective
+
+In this lab, you will use PowerShell to manage identities and permissions in Microsoft Entra ID.
+
+You will:
+
+1. Create a user named **Chewbacca**.
+2. Create a security group named **GCP_Admins**.
+3. Assign the **Global Administrator** role to the `GCP_Admins` group.
+4. Add **Chewbacca** to the `GCP_Admins` group.
+5. Verify each change using PowerShell.
+
+> **LAB ENVIRONMENT ONLY**
+>
+> `Global Administrator` is one of the most powerful roles in Microsoft Entra ID. Use this exercise only in the classroom/test tenant provided for this lab.
+>
+> Production environments should follow least-privilege principles rather than routinely assigning Global Administrator access.
+
+---
+
+# Architecture
+
+The end result of this lab will look like this:
+
+```text
+Microsoft Entra ID
+       |
+       +---- User
+       |       |
+       |       +---- Chewbacca
+       |
+       +---- Security Group
+               |
+               +---- GCP_Admins
+                      |
+                      +---- Global Administrator Role
+                      |
+                      +---- Member: Chewbacca
+```
+
+The important concept is:
+
+```text
+Chewbacca
+    |
+    v
+Member of GCP_Admins
+    |
+    v
+GCP_Admins has Global Administrator
+    |
+    v
+Chewbacca receives the group's administrative privileges
+```
+
+---
+
+# Gate 1 — Verify Microsoft Graph PowerShell
+
+The previous connectivity lab used Azure PowerShell and:
+
+```powershell
+Connect-AzAccount
+```
+
+Identity management in this lab will use **Microsoft Graph PowerShell**.
+
+Check whether Microsoft Graph PowerShell is installed:
+
+```powershell
+Get-Module Microsoft.Graph* -ListAvailable
+```
+
+If necessary, install it:
+
+```powershell
+Install-Module Microsoft.Graph -Scope CurrentUser
+```
+
+---
+
+# Gate 2 — Connect to Microsoft Graph
+
+Connect to Microsoft Graph with the permissions required for this lab:
+
+```powershell
+Connect-MgGraph -Scopes `
+    "User.ReadWrite.All", `
+    "Group.ReadWrite.All", `
+    "RoleManagement.ReadWrite.Directory"
+```
+
+Verify the Graph connection:
+
+```powershell
+Get-MgContext
+```
+
+Review the output.
+
+Pay particular attention to:
+
+```text
+Account
+TenantId
+Scopes
+```
+
+## Question
+
+Why might your Azure PowerShell connection and your Microsoft Graph PowerShell connection be considered two different contexts?
+
+---
+
+# Gate 3 — Define Your Lab Environment
+
+Before creating Chewbacca, identify your Microsoft Entra tenant domain.
+
+Your environment will probably have a domain similar to:
+
+```text
+something.onmicrosoft.com
+```
+
+Set your tenant domain:
+
+```powershell
+$TenantDomain = "YOURTENANT.onmicrosoft.com"
+```
+
+Create Chewbacca's User Principal Name:
+
+```powershell
+$ChewbaccaUPN = "chewbacca@$TenantDomain"
+```
+
+Display the result:
+
+```powershell
+$ChewbaccaUPN
+```
+
+It should look similar to:
+
+```text
+chewbacca@YOURTENANT.onmicrosoft.com
+```
+
+---
+
+# Gate 4 — Create Chewbacca
+
+First, specify a temporary lab password.
+
+Replace the example below with a password appropriate for your lab environment:
+
+```powershell
+$InitialPassword = "<YOUR-TEMPORARY-LAB-PASSWORD>"
+```
+
+Now define the properties of the new user:
+
+```powershell
+$UserParams = @{
+    accountEnabled = $true
+    displayName = "Chewbacca"
+    mailNickname = "chewbacca"
+    userPrincipalName = $ChewbaccaUPN
+
+    passwordProfile = @{
+        forceChangePasswordNextSignIn = $true
+        password = $InitialPassword
+    }
+}
+```
+
+Create the user:
+
+```powershell
+$Chewbacca = New-MgUser -BodyParameter $UserParams
+```
+
+Notice that the result of the command was saved in a variable:
+
+```powershell
+$Chewbacca
+```
+
+Now inspect some of the properties of the object:
+
+```powershell
+$Chewbacca.DisplayName
+
+$Chewbacca.UserPrincipalName
+
+$Chewbacca.Id
+```
+
+---
+
+## Verify Chewbacca
+
+Retrieve Chewbacca directly from Microsoft Entra ID:
+
+```powershell
+Get-MgUser -UserId $Chewbacca.Id
+```
+
+For cleaner output:
+
+```powershell
+Get-MgUser -UserId $Chewbacca.Id |
+    Select-Object DisplayName, UserPrincipalName, Id
+```
+
+Expected result:
+
+```text
+DisplayName   UserPrincipalName                     Id
+-----------   -----------------                     --
+Chewbacca     chewbacca@YOURTENANT.onmicrosoft.com  <GUID>
+```
+
+### Important PowerShell Concept
+
+The command did not simply return text.
+
+It returned an **object**.
+
+Try:
+
+```powershell
+$Chewbacca | Get-Member
+```
+
+Look through the properties and methods available on the object.
+
+---
+
+# Gate 5 — Create the GCP_Admins Group
+
+We want the group to receive a Microsoft Entra administrator role.
+
+Therefore, this must be a **role-assignable security group**.
+
+Define the group:
+
+```powershell
+$GroupParams = @{
+    displayName = "GCP_Admins"
+    description = "SEIR PowerShell lab administrator group"
+    mailEnabled = $false
+    mailNickname = "GCPAdmins"
+    securityEnabled = $true
+    isAssignableToRole = $true
+}
+```
+
+Create the group:
+
+```powershell
+$GCPAdmins = New-MgGroup -BodyParameter $GroupParams
+```
+
+Display the object:
+
+```powershell
+$GCPAdmins
+```
+
+Inspect the group's ID:
+
+```powershell
+$GCPAdmins.Id
+```
+
+---
+
+## Verify the Group
+
+```powershell
+Get-MgGroup -GroupId $GCPAdmins.Id |
+    Select-Object DisplayName, Id, IsAssignableToRole
+```
+
+You should verify:
+
+```text
+DisplayName        GCP_Admins
+IsAssignableToRole True
+```
+
+---
+
+# Gate 6 — Locate the Global Administrator Role
+
+Do not memorize role GUIDs.
+
+Ask Microsoft Entra ID for the role definition:
+
+```powershell
+$GlobalAdminRole = Get-MgRoleManagementDirectoryRoleDefinition `
+    -Filter "displayName eq 'Global Administrator'"
+```
+
+Display the role:
+
+```powershell
+$GlobalAdminRole
+```
+
+Now inspect its properties:
+
+```powershell
+$GlobalAdminRole.DisplayName
+
+$GlobalAdminRole.Id
+```
+
+You should see:
+
+```text
+Global Administrator
+```
+
+---
+
+# Gate 7 — Assign Global Administrator to GCP_Admins
+
+Assign the role to the group:
+
+```powershell
+$RoleAssignment = New-MgRoleManagementDirectoryRoleAssignment `
+    -DirectoryScopeId "/" `
+    -RoleDefinitionId $GlobalAdminRole.Id `
+    -PrincipalId $GCPAdmins.Id
+```
+
+Display the resulting role assignment:
+
+```powershell
+$RoleAssignment
+```
+
+### What Just Happened?
+
+The important values were:
+
+```text
+PrincipalId      = GCP_Admins group
+RoleDefinitionId = Global Administrator
+DirectoryScopeId = Entire directory
+```
+
+Conceptually:
+
+```text
+GCP_Admins
+     |
+     +---- receives ----> Global Administrator
+```
+
+---
+
+# Gate 8 — Add Chewbacca to GCP_Admins
+
+Now create a reference to Chewbacca's directory object:
+
+```powershell
+$MemberReference = @{
+    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($Chewbacca.Id)"
+}
+```
+
+Add Chewbacca to the group:
+
+```powershell
+New-MgGroupMemberByRef `
+    -GroupId $GCPAdmins.Id `
+    -BodyParameter $MemberReference
+```
+
+---
+
+# Gate 9 — Verify Group Membership
+
+Ask Microsoft Entra ID for the members of `GCP_Admins`:
+
+```powershell
+Get-MgGroupMember -GroupId $GCPAdmins.Id
+```
+
+Verify specifically that Chewbacca's object ID appears:
+
+```powershell
+Get-MgGroupMember -GroupId $GCPAdmins.Id |
+    Where-Object {
+        $_.Id -eq $Chewbacca.Id
+    }
+```
+
+If an object is returned, Chewbacca is a member of the group.
+
+---
+
+# Gate 10 — Verify the Administrative Role Assignment
+
+Retrieve the role assignments associated with the `GCP_Admins` group:
+
+```powershell
+Get-MgRoleManagementDirectoryRoleAssignment `
+    -Filter "principalId eq '$($GCPAdmins.Id)'" `
+    -ExpandProperty RoleDefinition |
+    Select-Object `
+        PrincipalId,
+        DirectoryScopeId,
+        @{
+            Name = "Role"
+            Expression = {
+                $_.RoleDefinition.DisplayName
+            }
+        }
+```
+
+Verify that the role is:
+
+```text
+Global Administrator
+```
+
+---
+
+# Final Architecture
+
+You should now have:
+
+```text
+Chewbacca
+    |
+    | Group Membership
+    v
+GCP_Admins
+    |
+    | Microsoft Entra Role Assignment
+    v
+Global Administrator
+```
+
+---
+
+# Final Verification
+
+Run:
+
+```powershell
+Write-Host "USER"
+Get-MgUser -UserId $Chewbacca.Id |
+    Select-Object DisplayName, UserPrincipalName, Id
+
+Write-Host "`nGROUP"
+Get-MgGroup -GroupId $GCPAdmins.Id |
+    Select-Object DisplayName, Id, IsAssignableToRole
+
+Write-Host "`nGROUP MEMBERSHIP"
+Get-MgGroupMember -GroupId $GCPAdmins.Id |
+    Where-Object {
+        $_.Id -eq $Chewbacca.Id
+    }
+
+Write-Host "`nROLE ASSIGNMENTS"
+Get-MgRoleManagementDirectoryRoleAssignment `
+    -Filter "principalId eq '$($GCPAdmins.Id)'" `
+    -ExpandProperty RoleDefinition
+```
+
+---
+
+# Success Criteria
+
+You have successfully completed the lab when:
+
+* [ ] Microsoft Graph PowerShell is installed.
+* [ ] You successfully connect using `Connect-MgGraph`.
+* [ ] The correct tenant is identified.
+* [ ] A user named `Chewbacca` exists.
+* [ ] Chewbacca has a unique Microsoft Entra object ID.
+* [ ] A group named `GCP_Admins` exists.
+* [ ] `GCP_Admins` is a role-assignable security group.
+* [ ] `GCP_Admins` has the `Global Administrator` role.
+* [ ] Chewbacca is a member of `GCP_Admins`.
+* [ ] PowerShell can independently verify each configuration change.
+
+---
+
+# Optional Cleanup
+
+Because this lab creates a highly privileged group, remove the lab objects when they are no longer needed.
+
+First, locate the specific role assignment:
+
+```powershell
+$Assignments = Get-MgRoleManagementDirectoryRoleAssignment `
+    -Filter "principalId eq '$($GCPAdmins.Id)'"
+```
+
+Find the Global Administrator assignment:
+
+```powershell
+$GlobalAdminAssignment = $Assignments |
+    Where-Object {
+        $_.RoleDefinitionId -eq $GlobalAdminRole.Id
+    }
+```
+
+Remove the role assignment:
+
+```powershell
+$GlobalAdminAssignment |
+    ForEach-Object {
+        Remove-MgRoleManagementDirectoryRoleAssignment `
+            -UnifiedRoleAssignmentId $_.Id
+    }
+```
+
+Remove the group:
+
+```powershell
+Remove-MgGroup -GroupId $GCPAdmins.Id
+```
+
+Remove Chewbacca:
+
+```powershell
+Remove-MgUser -UserId $Chewbacca.Id
+```
+
+---
+
+# Discussion Questions
+
+1. What is the difference between Chewbacca's `DisplayName` and Chewbacca's `Id`?
+
+2. Why did we save the result of `New-MgUser` into `$Chewbacca`?
+
+3. Why did we save the result of `New-MgGroup` into `$GCPAdmins`?
+
+4. Why was `isAssignableToRole` set to `$true` when the group was created?
+
+5. Why did the role assignment use the group's **object ID** instead of its name?
+
+6. Is Chewbacca receiving Global Administrator directly or indirectly?
+
+7. What happens to Chewbacca's administrative permissions if Chewbacca is removed from `GCP_Admins`?
+
+8. Why would assigning `Global Administrator` routinely be a poor practice in a production environment?
+
+9. How is a Microsoft Entra `Global Administrator` role different from an Azure RBAC `Owner` role?
+
+---
+
+# Key PowerShell Pattern
+
+Notice the pattern used throughout this lab:
+
+```text
+CREATE
+   |
+   v
+CAPTURE THE OBJECT
+   |
+   v
+READ ITS ID
+   |
+   v
+USE THE ID IN THE NEXT OPERATION
+   |
+   v
+VERIFY THE CHANGE
+```
+
+For example:
+
+```powershell
+$Chewbacca = New-MgUser ...
+
+$Chewbacca.Id
+```
+
+and:
+
+```powershell
+$GCPAdmins = New-MgGroup ...
+
+$GCPAdmins.Id
+```
+
+This is an important PowerShell automation pattern.
+
+> **Do not assume that a command worked simply because PowerShell did not display an error. Verify the resulting state.**
