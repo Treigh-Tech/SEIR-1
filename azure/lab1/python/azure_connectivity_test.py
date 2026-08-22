@@ -1,5 +1,52 @@
-# you need this first
-# python -m pip install azure-identity azure-mgmt-resource azure-mgmt-resource-subscriptions
+# ---------------------------------------------------------
+# BEFORE RUNNING THIS SCRIPT
+# ---------------------------------------------------------
+#
+# Install the required Python packages:
+#
+# python -m pip install azure-identity azure-mgmt-resource
+#
+#
+# Login to Azure using the Azure CLI:
+#
+# az login
+#
+#
+# Verify that you are logged in:
+#
+# az account show
+#
+#
+# Display all subscriptions available to your account:
+#
+# az account list -o table
+#
+#
+# If you have multiple subscriptions, select the subscription
+# you want Python to use:
+#
+# az account set --subscription "SUBSCRIPTION-ID"
+#
+#
+# Verify the current/default Azure CLI context:
+#
+# az account show --query "{User:user.name,Tenant:tenantId,Subscription:name,SubscriptionId:id}" -o table
+#
+#
+# The Python script uses:
+#
+#     AzureCliCredential()
+#
+# and therefore uses the credentials from the current
+# Azure CLI login.
+#
+# The script does NOT hardcode:
+#
+#     - Tenant ID
+#     - Subscription ID
+#     - Azure CLI installation path
+#
+# ---------------------------------------------------------
 
 
 """
@@ -11,9 +58,9 @@ Purpose:
 
     1. Run Python.
     2. Import the Azure SDK.
-    3. Authenticate to Azure.
-    4. Discover Azure subscriptions.
-    5. Select an Azure subscription.
+    3. Authenticate to Azure using Azure CLI credentials.
+    4. Identify the current Azure CLI subscription.
+    5. Access the current Azure CLI subscription.
     6. Query Azure Resource Groups.
 
 PowerShell equivalent:
@@ -25,7 +72,10 @@ PowerShell equivalent:
     Get-AzResourceGroup
 """
 
+
 import sys
+import shutil
+import subprocess
 
 
 # ---------------------------------------------------------
@@ -42,8 +92,9 @@ print("\n[GATE 1] Checking Python...")
 print(f"Python Version: {sys.version.split()[0]}")
 print(f"Python Executable: {sys.executable}")
 
-if sys.version_info < (3, 9):
-    print("\nFAIL: Python 3.9 or newer is required.")
+if sys.version_info < (3, 8):
+
+    print("\nFAIL: Python 3.8 or newer is required.")
     sys.exit(1)
 
 print("PASS: Python is operational.")
@@ -57,9 +108,12 @@ print("PASS: Python is operational.")
 print("\n[GATE 2] Checking Azure Python SDK...")
 
 try:
-    from azure.identity import InteractiveBrowserCredential
-    from azure.mgmt.resource.resources import ResourceManagementClient
-    from azure.mgmt.resource.subscriptions import SubscriptionClient
+
+    from azure.identity import AzureCliCredential
+
+    from azure.mgmt.resource.resources import (
+        ResourceManagementClient,
+    )
 
 except ImportError as error:
 
@@ -69,8 +123,7 @@ except ImportError as error:
     print()
     print(
         "python -m pip install "
-        "azure-identity azure-mgmt-resource "
-        "azure-mgmt-resource-subscriptions"
+        "azure-identity azure-mgmt-resource"
     )
 
     print(f"\nPython Error: {error}")
@@ -82,24 +135,179 @@ print("PASS: Azure Python SDK is installed.")
 
 # ---------------------------------------------------------
 # GATE 3
-# Authenticate to Azure
+# Authenticate using Azure CLI credentials
 # ---------------------------------------------------------
 
 print("\n[GATE 3] Connecting to Azure...")
 
 print(
-    "\nA browser window should open.\n"
-    "Sign in using the Azure account assigned to you."
+    "\nUsing the credentials from your Azure CLI login."
+)
+
+print(
+    "If you have not logged in yet, run:"
+    "\n\n    az login"
 )
 
 try:
 
-    credential = InteractiveBrowserCredential()
+    # -----------------------------------------------------
+    # Locate Azure CLI
+    #
+    # shutil.which() searches the operating system PATH.
+    #
+    # This avoids hardcoding an Azure CLI installation path
+    # and makes the script portable.
+    # -----------------------------------------------------
 
-    # Requesting a token forces authentication to occur now.
+    az_command = shutil.which("az")
+
+    if not az_command:
+
+        print("\nFAIL: Azure CLI (az) was not found.")
+
+        print(
+            "\nMake sure Azure CLI is installed and "
+            "available in your PATH."
+        )
+
+        print(
+            "\nVerify with:"
+            "\n\n    az --version"
+        )
+
+        sys.exit(1)
+
+
+    # -----------------------------------------------------
+    # Create an Azure CLI credential.
+    #
+    # This uses the credentials from:
+    #
+    #     az login
+    #
+    # It does NOT open a browser.
+    # -----------------------------------------------------
+
+    credential = AzureCliCredential()
+
+
+    # -----------------------------------------------------
+    # Get the current/default subscription from Azure CLI.
+    #
+    # This is the subscription selected by:
+    #
+    #     az account set --subscription ...
+    # -----------------------------------------------------
+
+    subscription_id = subprocess.check_output(
+        [
+            az_command,
+            "account",
+            "show",
+            "--query",
+            "id",
+            "-o",
+            "tsv",
+        ],
+        text=True,
+    ).strip()
+
+
+    if not subscription_id:
+
+        print(
+            "\nFAIL: Azure CLI does not have "
+            "a current subscription."
+        )
+
+        print(
+            "\nRun:"
+            "\n    az login"
+            "\n    az account list -o table"
+            "\n    az account set --subscription \"SUBSCRIPTION-ID\""
+        )
+
+        sys.exit(1)
+
+
+    # -----------------------------------------------------
+    # Get the current/default tenant from Azure CLI.
+    # -----------------------------------------------------
+
+    tenant_id = subprocess.check_output(
+        [
+            az_command,
+            "account",
+            "show",
+            "--query",
+            "tenantId",
+            "-o",
+            "tsv",
+        ],
+        text=True,
+    ).strip()
+
+
+    # -----------------------------------------------------
+    # Get the currently logged-in Azure account.
+    # -----------------------------------------------------
+
+    account_name = subprocess.check_output(
+        [
+            az_command,
+            "account",
+            "show",
+            "--query",
+            "user.name",
+            "-o",
+            "tsv",
+        ],
+        text=True,
+    ).strip()
+
+
+    # -----------------------------------------------------
+    # Request an Azure management token.
+    #
+    # This forces AzureCliCredential to authenticate now
+    # instead of waiting until the first ARM API call.
+    # -----------------------------------------------------
+
     credential.get_token(
         "https://management.azure.com/.default"
     )
+
+
+except FileNotFoundError:
+
+    print(
+        "\nFAIL: Azure CLI (az) could not be executed."
+    )
+
+    print(
+        "\nVerify Azure CLI installation with:"
+        "\n\n    az --version"
+    )
+
+    sys.exit(1)
+
+
+except subprocess.CalledProcessError as error:
+
+    print(
+        "\nFAIL: Could not read the Azure CLI account."
+    )
+
+    print(
+        "\nMake sure you have run:"
+        "\n\n    az login"
+    )
+
+    print(f"\nError:\n{error}")
+
+    sys.exit(1)
+
 
 except Exception as error:
 
@@ -108,153 +316,71 @@ except Exception as error:
 
     sys.exit(1)
 
+
 print("\nPASS: Azure authentication successful.")
 
 
 # ---------------------------------------------------------
 # GATE 4
-# Discover subscriptions
+# Verify current Azure CLI subscription
 # ---------------------------------------------------------
 
-print("\n[GATE 4] Discovering Azure subscriptions...")
+print("\n[GATE 4] Checking Azure subscription...")
 
 try:
 
-    subscription_client = SubscriptionClient(credential)
-
-    subscriptions = list(
-        subscription_client.subscriptions.list()
-    )
-
-except Exception as error:
-
-    print("\nFAIL: Could not query Azure subscriptions.")
-    print(f"\nError:\n{error}")
-
-    sys.exit(1)
-
-
-if not subscriptions:
-
-    print("\nFAIL: No Azure subscriptions were found.")
-    sys.exit(1)
-
-
-print(
-    f"PASS: Found {len(subscriptions)} "
-    f"Azure subscription(s).\n"
-)
-
-
-# ---------------------------------------------------------
-# Display subscriptions
-# ---------------------------------------------------------
-
-for number, subscription in enumerate(subscriptions, start=1):
-
-    print(f"[{number}] {subscription.display_name}")
-    print(f"    Subscription ID: {subscription.subscription_id}")
-    print(f"    State: {subscription.state}")
-
-    tenant_id = getattr(subscription, "tenant_id", None)
-
-    if tenant_id:
-        print(f"    Tenant ID: {tenant_id}")
-
-    print()
-
-
-# ---------------------------------------------------------
-# GATE 5
-# Select subscription
-# ---------------------------------------------------------
-
-print("[GATE 5] Selecting Azure subscription...")
-
-
-if len(subscriptions) == 1:
-
-    selected_subscription = subscriptions[0]
-
-    print(
-        "Only one subscription is available. "
-        "Selecting it automatically."
-    )
-
-else:
-
-    while True:
-
-        try:
-
-            selection = int(
-                input(
-                    f"Select subscription "
-                    f"[1-{len(subscriptions)}]: "
-                )
-            )
-
-            if 1 <= selection <= len(subscriptions):
-
-                selected_subscription = subscriptions[
-                    selection - 1
-                ]
-
-                break
-
-            print("Invalid selection.")
-
-        except ValueError:
-
-            print("Enter a number.")
-
-
-subscription_id = selected_subscription.subscription_id
-
-
-print("\nSelected Subscription:")
-print(f"Name: {selected_subscription.display_name}")
-print(f"ID:   {subscription_id}")
-
-tenant_id = getattr(
-    selected_subscription,
-    "tenant_id",
-    None,
-)
-
-if tenant_id:
-    print(f"Tenant ID: {tenant_id}")
-
-print("\nPASS: Azure subscription selected.")
-
-
-# ---------------------------------------------------------
-# GATE 6
-# Query Resource Groups
-# ---------------------------------------------------------
-
-print("\n[GATE 6] Testing Azure Resource Manager access...")
-
-try:
+    # -----------------------------------------------------
+    # Create a Resource Management client using the
+    # subscription selected in the Azure CLI.
+    # -----------------------------------------------------
 
     resource_client = ResourceManagementClient(
         credential,
         subscription_id,
     )
 
+
+    # -----------------------------------------------------
+    # Query Resource Groups.
+    #
+    # This verifies that the authenticated identity actually
+    # has access to the selected subscription.
+    # -----------------------------------------------------
+
     resource_groups = list(
         resource_client.resource_groups.list()
     )
 
+
 except Exception as error:
 
-    print("\nFAIL: Azure Resource Manager query failed.")
+    print(
+        "\nFAIL: Could not access Azure subscription."
+    )
+
     print(f"\nError:\n{error}")
 
     sys.exit(1)
 
 
-print("PASS: Azure Resource Manager responded successfully.")
+print(
+    "PASS: Azure subscription is accessible."
+)
+
+
+# ---------------------------------------------------------
+# GATE 5
+# Select current Azure CLI subscription
+# ---------------------------------------------------------
+
+print("\n[GATE 5] Selecting Azure subscription...")
+
+selected_subscription_id = subscription_id
+
+print(
+    f"PASS: Using Azure CLI default subscription:"
+    f"\n      {selected_subscription_id}"
+)
 
 
 # ---------------------------------------------------------
@@ -297,26 +423,21 @@ print("Subscription Query:   PASS")
 print("ARM Resource Query:   PASS")
 
 print()
+
 print(
-    f"Subscription: "
-    f"{selected_subscription.display_name}"
+    f"Azure Account:        {account_name}"
 )
 
 print(
-    f"Subscription ID: "
-    f"{subscription_id}"
+    f"Subscription ID:      {selected_subscription_id}"
 )
 
-if tenant_id:
-
-    print(
-        f"Tenant ID: "
-        f"{tenant_id}"
-    )
+print(
+    f"Tenant ID:            {tenant_id}"
+)
 
 print(
-    f"Resource Groups: "
-    f"{len(resource_groups)}"
+    f"Resource Groups:      {len(resource_groups)}"
 )
 
 print()
