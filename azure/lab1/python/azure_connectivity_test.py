@@ -1,5 +1,5 @@
 # you need this first
-# python -m pip install azure-identity azure-mgmt-resource
+# python -m pip install azure-identity azure-mgmt-resource azure-mgmt-resource-subscriptions
 
 
 """
@@ -42,8 +42,8 @@ print("\n[GATE 1] Checking Python...")
 print(f"Python Version: {sys.version.split()[0]}")
 print(f"Python Executable: {sys.executable}")
 
-if sys.version_info < (3, 8):
-    print("\nFAIL: Python 3.8 or newer is required.")
+if sys.version_info < (3, 9):
+    print("\nFAIL: Python 3.9 or newer is required.")
     sys.exit(1)
 
 print("PASS: Python is operational.")
@@ -58,10 +58,8 @@ print("\n[GATE 2] Checking Azure Python SDK...")
 
 try:
     from azure.identity import InteractiveBrowserCredential
-    from azure.mgmt.resource import (
-        ResourceManagementClient,
-        SubscriptionClient,
-    )
+    from azure.mgmt.resource.resources import ResourceManagementClient
+    from azure.mgmt.resource.subscriptions import SubscriptionClient
 
 except ImportError as error:
 
@@ -71,7 +69,8 @@ except ImportError as error:
     print()
     print(
         "python -m pip install "
-        "azure-identity azure-mgmt-resource"
+        "azure-identity azure-mgmt-resource "
+        "azure-mgmt-resource-subscriptions"
     )
 
     print(f"\nPython Error: {error}")
