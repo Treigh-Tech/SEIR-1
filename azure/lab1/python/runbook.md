@@ -254,7 +254,9 @@ Do not continue until the file appears.
 
 # Step 7 — Install the Required Azure Python Packages
 
-Run:
+Run: 
+
+        pip install azure-identity azure-mgmt-resource azure-mgmt-subscription
 
 ```bash
 python -m pip install azure-identity azure-mgmt-resource
