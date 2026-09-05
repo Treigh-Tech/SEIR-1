@@ -1,0 +1,961 @@
+# Azure IAM Lab — Principal + Role + Scope
+
+## Purpose
+
+In this lab, you will learn how Azure Role-Based Access Control (**Azure RBAC**) works.
+
+You already know how to:
+
+* Connect to Azure using PowerShell.
+* Create users and groups in Microsoft Entra ID.
+* Create or view Azure Resource Groups.
+* Authenticate using your Azure account.
+
+Now you will connect those concepts together.
+
+The key Azure RBAC model is:
+
+```text
+PRINCIPAL + ROLE + SCOPE = ACCESS
+```
+
+Where:
+
+```text
+PRINCIPAL = Who receives access?
+
+ROLE      = What are they allowed to do?
+
+SCOPE     = Where are they allowed to do it?
+```
+
+---
+
+# Lab Architecture
+
+You will create or use two Azure Resource Groups:
+
+```text
+SEIR-DEV
+SEIR-PROD
+```
+
+You will also work with two Microsoft Entra security groups:
+
+```text
+SEIR_Developers
+SEIR_Prod_Readers
+```
+
+The final configuration will look like this:
+
+```text
+Chewbacca
+    |
+    +-------------------------+
+    |                         |
+    v                         v
+SEIR_Developers         SEIR_Prod_Readers
+    |                         |
+    | Contributor             | Reader
+    v                         v
+SEIR-DEV                  SEIR-PROD
+```
+
+This means:
+
+```text
+Chewbacca
+    |
+    +---- SEIR-DEV
+    |       Read:   YES
+    |       Modify: YES
+    |
+    +---- SEIR-PROD
+            Read:   YES
+            Modify: NO
+```
+
+---
+
+# Important Concept — Entra Roles vs Azure RBAC Roles
+
+In the previous lab, you used:
+
+```text
+Global Administrator
+```
+
+`Global Administrator` is a **Microsoft Entra directory role**.
+
+It controls administrative capabilities within Microsoft Entra ID.
+
+Examples include:
+
+```text
+Users
+Groups
+Applications
+Directory Configuration
+Identity Administration
+```
+
+Azure RBAC is different.
+
+Azure RBAC controls access to **Azure resources**.
+
+Examples of Azure RBAC roles include:
+
+```text
+Reader
+Contributor
+Owner
+```
+
+Think of the distinction this way:
+
+```text
+Microsoft Entra Roles
+        |
+        v
+Identity / Directory Administration
+```
+
+versus:
+
+```text
+Azure RBAC Roles
+        |
+        v
+Azure Resource Administration
+```
+
+---
+
+# Gate 1 — Connect to Azure
+
+Start PowerShell.
+
+Connect to Azure:
+
+```powershell
+Connect-AzAccount
+```
+
+Verify the current Azure context:
+
+```powershell
+Get-AzContext
+```
+
+Verify that you are using the correct subscription.
+
+If necessary:
+
+```powershell
+Get-AzSubscription
+```
+
+Then select the correct subscription:
+
+```powershell
+Set-AzContext -Subscription "<subscription-name-or-id>"
+```
+
+Verify again:
+
+```powershell
+Get-AzContext
+```
+
+---
+
+# Gate 2 — Verify Existing Resource Groups
+
+List your Azure Resource Groups:
+
+```powershell
+Get-AzResourceGroup
+```
+
+Look for:
+
+```text
+SEIR-DEV
+SEIR-PROD
+```
+
+If both Resource Groups already exist, continue to Gate 3.
+
+If they do not exist, create them.
+
+---
+
+# Creating Resource Groups If Necessary
+
+## Step 1 — View Available Azure Locations
+
+Run:
+
+```powershell
+Get-AzLocation |
+    Select-Object Location
+```
+
+Choose an Azure region appropriate for your environment.
+
+For example:
+
+```text
+eastus
+```
+
+or:
+
+```text
+centralus
+```
+
+Set the region as a variable:
+
+```powershell
+$Location = "eastus"
+```
+
+---
+
+## Step 2 — Create SEIR-DEV
+
+Run:
+
+```powershell
+New-AzResourceGroup `
+    -Name "SEIR-DEV" `
+    -Location $Location
+```
+
+You should see output similar to:
+
+```text
+ResourceGroupName : SEIR-DEV
+Location          : eastus
+ProvisioningState : Succeeded
+```
+
+---
+
+## Step 3 — Create SEIR-PROD
+
+Run:
+
+```powershell
+New-AzResourceGroup `
+    -Name "SEIR-PROD" `
+    -Location $Location
+```
+
+---
+
+## Step 4 — Verify Both Resource Groups
+
+Run:
+
+```powershell
+Get-AzResourceGroup |
+    Select-Object ResourceGroupName, Location
+```
+
+You should see:
+
+```text
+ResourceGroupName    Location
+-----------------    --------
+SEIR-DEV             eastus
+SEIR-PROD            eastus
+```
+
+Microsoft documents `New-AzResourceGroup` as the Azure PowerShell cmdlet for creating a Resource Group.
+
+---
+
+# Gate 3 — Create the Security Groups
+
+Connect to Microsoft Graph if necessary:
+
+```powershell
+Connect-MgGraph -Scopes `
+    "Group.ReadWrite.All", `
+    "User.Read.All"
+```
+
+Create the development group:
+
+```powershell
+$DevGroup = New-MgGroup `
+    -DisplayName "SEIR_Developers" `
+    -MailEnabled:$false `
+    -MailNickname "SEIRDevelopers" `
+    -SecurityEnabled
+```
+
+Create the production reader group:
+
+```powershell
+$ProdGroup = New-MgGroup `
+    -DisplayName "SEIR_Prod_Readers" `
+    -MailEnabled:$false `
+    -MailNickname "SEIRProdReaders" `
+    -SecurityEnabled
+```
+
+---
+
+# Verify the Groups
+
+Run:
+
+```powershell
+Get-MgGroup |
+    Where-Object {
+        $_.DisplayName -like "SEIR_*"
+    } |
+    Select-Object DisplayName, Id
+```
+
+You should see:
+
+```text
+SEIR_Developers
+SEIR_Prod_Readers
+```
+
+---
+
+# Gate 4 — Locate Chewbacca
+
+Find the Chewbacca account created in the previous lab.
+
+Example:
+
+```powershell
+$Chewbacca = Get-MgUser `
+    -Filter "displayName eq 'Chewbacca'"
+```
+
+Verify:
+
+```powershell
+$Chewbacca |
+    Select-Object DisplayName, UserPrincipalName, Id
+```
+
+You need Chewbacca's Microsoft Entra Object ID.
+
+You can also display it directly:
+
+```powershell
+$Chewbacca.Id
+```
+
+---
+
+# Gate 5 — Add Chewbacca to the Groups
+
+Create the member reference:
+
+```powershell
+$ChewbaccaReference = @{
+    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($Chewbacca.Id)"
+}
+```
+
+Add Chewbacca to `SEIR_Developers`:
+
+```powershell
+New-MgGroupMemberByRef `
+    -GroupId $DevGroup.Id `
+    -BodyParameter $ChewbaccaReference
+```
+
+Add Chewbacca to `SEIR_Prod_Readers`:
+
+```powershell
+New-MgGroupMemberByRef `
+    -GroupId $ProdGroup.Id `
+    -BodyParameter $ChewbaccaReference
+```
+
+---
+
+# Verify Membership
+
+Run:
+
+```powershell
+Get-MgGroupMember `
+    -GroupId $DevGroup.Id
+```
+
+Then:
+
+```powershell
+Get-MgGroupMember `
+    -GroupId $ProdGroup.Id
+```
+
+Chewbacca should appear in both groups.
+
+---
+
+# Gate 6 — Understand the Azure Roles
+
+We will use two Azure RBAC roles.
+
+## Reader
+
+The `Reader` role allows a principal to view Azure resources.
+
+Conceptually:
+
+```text
+Reader
+
+READ       YES
+CHANGE     NO
+DELETE     NO
+```
+
+---
+
+## Contributor
+
+The `Contributor` role allows a principal to manage Azure resources.
+
+Conceptually:
+
+```text
+Contributor
+
+READ       YES
+CREATE     YES
+CHANGE     YES
+DELETE     YES
+```
+
+However, `Contributor` does not automatically grant permission to create Azure RBAC role assignments.
+
+---
+
+# Gate 7 — Assign Contributor to SEIR_Developers
+
+We want:
+
+```text
+SEIR_Developers
+        |
+        | Contributor
+        v
+     SEIR-DEV
+```
+
+First verify the group's Object ID:
+
+```powershell
+$DevGroup.Id
+```
+
+Create the role assignment:
+
+```powershell
+New-AzRoleAssignment `
+    -ObjectId $DevGroup.Id `
+    -RoleDefinitionName "Contributor" `
+    -ResourceGroupName "SEIR-DEV"
+```
+
+Azure PowerShell supports assigning a role to a Microsoft Entra security group by using the group's Object ID, the role name, and the Resource Group scope.
+
+---
+
+# Gate 8 — Assign Reader to SEIR_Prod_Readers
+
+We want:
+
+```text
+SEIR_Prod_Readers
+        |
+        | Reader
+        v
+     SEIR-PROD
+```
+
+Run:
+
+```powershell
+New-AzRoleAssignment `
+    -ObjectId $ProdGroup.Id `
+    -RoleDefinitionName "Reader" `
+    -ResourceGroupName "SEIR-PROD"
+```
+
+---
+
+# Gate 9 — Verify SEIR-DEV Permissions
+
+Run:
+
+```powershell
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-DEV"
+```
+
+Look for:
+
+```text
+SEIR_Developers
+Contributor
+```
+
+For cleaner output:
+
+```powershell
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-DEV" |
+    Select-Object `
+        DisplayName,
+        RoleDefinitionName,
+        Scope
+```
+
+---
+
+# Gate 10 — Verify SEIR-PROD Permissions
+
+Run:
+
+```powershell
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-PROD"
+```
+
+Look for:
+
+```text
+SEIR_Prod_Readers
+Reader
+```
+
+For cleaner output:
+
+```powershell
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-PROD" |
+    Select-Object `
+        DisplayName,
+        RoleDefinitionName,
+        Scope
+```
+
+---
+
+# The Azure RBAC Formula
+
+You have now created two Azure role assignments.
+
+The first is:
+
+```text
+PRINCIPAL
+SEIR_Developers
+
+        +
+
+ROLE
+Contributor
+
+        +
+
+SCOPE
+SEIR-DEV
+
+        =
+
+ACCESS
+Manage resources inside SEIR-DEV
+```
+
+The second is:
+
+```text
+PRINCIPAL
+SEIR_Prod_Readers
+
+        +
+
+ROLE
+Reader
+
+        +
+
+SCOPE
+SEIR-PROD
+
+        =
+
+ACCESS
+View resources inside SEIR-PROD
+```
+
+That is the fundamental Azure RBAC model.
+
+---
+
+# Understanding Scope
+
+Azure RBAC permissions can be assigned at different levels.
+
+Conceptually:
+
+```text
+Management Group
+       |
+       v
+Subscription
+       |
+       v
+Resource Group
+       |
+       v
+Individual Resource
+```
+
+Permissions assigned higher in the hierarchy can apply to resources beneath that scope.
+
+For example:
+
+```text
+Contributor
+     @
+Subscription
+```
+
+can affect:
+
+```text
+Subscription
+    |
+    +---- SEIR-DEV
+    |
+    +---- SEIR-PROD
+    |
+    +---- Other Resource Groups
+```
+
+But:
+
+```text
+Contributor
+     @
+SEIR-DEV
+```
+
+is limited to:
+
+```text
+SEIR-DEV
+```
+
+This is why scope matters.
+
+---
+
+# Least Privilege
+
+A basic IAM principle is:
+
+> Give an identity only the permissions required to perform its job, and only at the scope where those permissions are required.
+
+Instead of:
+
+```text
+Chewbacca
+    |
+    v
+Contributor @ Entire Subscription
+```
+
+we used:
+
+```text
+Chewbacca
+    |
+    v
+SEIR_Developers
+    |
+    v
+Contributor @ SEIR-DEV
+```
+
+That limits the effective scope.
+
+---
+
+# Why Use Groups?
+
+You could assign the role directly to Chewbacca.
+
+Example:
+
+```text
+Chewbacca
+     |
+     v
+Contributor
+     |
+     v
+SEIR-DEV
+```
+
+But this becomes difficult to manage when you have many users.
+
+Instead:
+
+```text
+Chewbacca ----+
+              |
+Han Solo -----+----> SEIR_Developers
+              |           |
+Leia ---------+           |
+                          v
+                     Contributor
+                          |
+                          v
+                       SEIR-DEV
+```
+
+Now access is managed through group membership.
+
+If Han Solo joins the development team:
+
+```text
+Add Han Solo
+      |
+      v
+SEIR_Developers
+```
+
+He inherits the access associated with the group.
+
+If Chewbacca leaves the team:
+
+```text
+Remove Chewbacca
+       |
+       v
+SEIR_Developers
+```
+
+His group-based access is removed.
+
+---
+
+# Challenge 1 — Who Can Do What?
+
+Given:
+
+```text
+SEIR_Developers
+        |
+        v
+Contributor @ SEIR-DEV
+```
+
+and:
+
+```text
+SEIR_Prod_Readers
+        |
+        v
+Reader @ SEIR-PROD
+```
+
+Chewbacca is a member of both groups.
+
+Answer:
+
+### Can Chewbacca view SEIR-DEV?
+
+```text
+YES
+```
+
+### Can Chewbacca modify SEIR-DEV?
+
+```text
+YES
+```
+
+### Can Chewbacca view SEIR-PROD?
+
+```text
+YES
+```
+
+### Can Chewbacca modify SEIR-PROD?
+
+```text
+NO
+```
+
+---
+
+# Challenge 2 — Scope
+
+Consider:
+
+```text
+Chewbacca
+    |
+    v
+Contributor
+    |
+    v
+Subscription
+```
+
+What Resource Groups can Chewbacca potentially manage?
+
+Now compare that with:
+
+```text
+Chewbacca
+    |
+    v
+Contributor
+    |
+    v
+SEIR-DEV
+```
+
+Which assignment follows least privilege more closely?
+
+Explain why.
+
+---
+
+# Challenge 3 — Add Another User
+
+Create another user.
+
+For example:
+
+```text
+Han Solo
+```
+
+Do **not** assign an Azure role directly to Han.
+
+Instead:
+
+```text
+Han Solo
+    |
+    v
+SEIR_Developers
+```
+
+Then determine what access Han receives.
+
+Explain why.
+
+---
+
+# Challenge 4 — Remove Chewbacca
+
+Remove Chewbacca from:
+
+```text
+SEIR_Developers
+```
+
+Then answer:
+
+```text
+Does Chewbacca still receive Contributor through that group?
+```
+
+Explain your answer.
+
+---
+
+# Final Verification
+
+Run:
+
+```powershell
+Write-Host "=== SEIR AZURE RBAC LAB ==="
+
+Write-Host "`nSEIR-DEV ROLE ASSIGNMENTS"
+
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-DEV" |
+    Select-Object `
+        DisplayName,
+        RoleDefinitionName,
+        Scope
+
+Write-Host "`nSEIR-PROD ROLE ASSIGNMENTS"
+
+Get-AzRoleAssignment `
+    -ResourceGroupName "SEIR-PROD" |
+    Select-Object `
+        DisplayName,
+        RoleDefinitionName,
+        Scope
+
+Write-Host "`n=== LAB COMPLETE ==="
+```
+
+---
+
+# Success Criteria
+
+You have completed the lab when:
+
+* [ ] You successfully connected to Azure.
+* [ ] You verified the correct subscription.
+* [ ] `SEIR-DEV` exists.
+* [ ] `SEIR-PROD` exists.
+* [ ] `SEIR_Developers` exists.
+* [ ] `SEIR_Prod_Readers` exists.
+* [ ] Chewbacca belongs to both groups.
+* [ ] `SEIR_Developers` has `Contributor` on `SEIR-DEV`.
+* [ ] `SEIR_Prod_Readers` has `Reader` on `SEIR-PROD`.
+* [ ] You can verify both role assignments using PowerShell.
+* [ ] You can explain the difference between a principal, role, and scope.
+* [ ] You can explain why group-based IAM is easier to manage than assigning permissions individually.
+
+---
+
+# Key Concept
+
+Remember:
+
+```text
+WHO?
+Principal
+
+WHAT?
+Role
+
+WHERE?
+Scope
+```
+
+Together:
+
+```text
+PRINCIPAL + ROLE + SCOPE = ACCESS
+```
+
+This is the foundation of Azure RBAC.
